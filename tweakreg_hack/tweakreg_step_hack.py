@@ -5,7 +5,7 @@ JWST pipeline step for image alignment.
 
 """
 from os import path
-
+import numpy as np
 from astropy.table import Table
 from astropy import units as u
 from astropy.coordinates import SkyCoord
@@ -97,26 +97,49 @@ class TweakRegStep(Step):
     def process(self, input):
 
         # TODO add these params as actual config items...wherever that happens
+        for par,default in [('matching_function',None),('gaia_matching_function',None),
+                        ('refcat',None),('already_matched',False),
+                        ('brightest_gaia_mag',-999),('faintest_gaia_mag',999),('source_xcol',None),
+                        ('source_ycol',None),('source_racol',None),('source_deccol',None),('ref_racol',None),('ref_deccol',None)]:
+            if par not in self.__dict__.keys():
+                self.__dict__[par] = default
 
-        try:
-            temp = self.matching_function
-        except:
-            self.matching_function = None
 
-        try:
-            temp = self.gaia_matching_function
-        except:
-            self.gaia_matching_function = None
+        # try:
+        #     temp = self.matching_function
+        # except:
+        #     self.matching_function = None
 
-        try:
-            temp = self.refcat
-        except:
-            self.refcat = None
+        # try:
+        #     temp = self.gaia_matching_function
+        # except:
+        #     self.gaia_matching_function = None
 
-        try:
-            temp = self.already_matched
-        except:
-            self.already_matched = False
+        # try:
+        #     temp = self.refcat
+        # except:
+        #     self.refcat = None
+
+        # try:
+        #     temp = self.already_matched
+        # except:
+        #     self.already_matched = False
+
+        # try:
+        #     temp = self.brightest_gaia_mag
+        # except:
+        #     self.brightest_gaia_mag = -999
+        # try:
+        #     temp = self.faintest_gaia_mag 
+        # except:
+        #     self.faintest_gaia_mag = 999 
+
+        # try:
+        #     temp = self.source_xcol
+        # except:
+        #     self.source_xcol = None
+
+
 
         if isinstance(self.refcat,str):
             try:
@@ -154,6 +177,21 @@ class TweakRegStep(Step):
             try:
                 # TODO add source catalog to the image model instance
                 catalog = image_model.source_catalog
+
+                new_sourcecat = Table()
+                if self.source_xcol is not None:
+                    new_sourcecat['x'] = catalog[self.source_xcol]
+                if self.source_ycol is not None:
+                    new_sourcecat['y'] = catalog[self.source_ycol]
+                if self.source_racol is not None:
+                    new_sourcecat['ra'] = catalog[self.source_racol]
+                if self.source_deccol is not None:
+                    new_sourcecat['dec'] = catalog[self.source_deccol]
+                for col in catalog.colnames:
+                    if col not in [self.source_xcol,self.source_ycol,self.source_racol,self.source_deccol]:
+                        new_sourcecat[col] = catalog[col]
+                catalog = new_sourcecat
+
             except:
                 catalog = make_tweakreg_catalog(
                     image_model, self.kernel_fwhm, self.snr_threshold,
@@ -265,6 +303,19 @@ class TweakRegStep(Step):
         else:
             self.log.info('USING PROVIDED MATCHING FUNCTION')
 
+        if self.refcat is not None:
+            keep = []
+            new_refcat = Table()
+            if self.ref_racol is not None:
+                new_refcat['RA'] = self.refcat[self.ref_racol]
+            if self.ref_deccol is not None:    
+                new_refcat['DEC'] = self.refcat[self.ref_deccol]
+            for col in self.refcat.colnames:
+                if col not in [self.ref_racol,self.ref_deccol]:
+                    new_refcat[col] = self.refcat[col]
+            self.refcat = new_refcat
+
+
 
 
         try:
@@ -326,6 +377,9 @@ class TweakRegStep(Step):
             ref_cat = amutils.create_astrometric_catalog(images,
                                                          self.gaia_catalog,
                                                          output=output_name)
+
+            ref_cat = ref_cat[np.where(np.logical_and(ref_cat['mag']<self.faintest_gaia_mag,
+                                      ref_cat['mag']>self.brightest_gaia_mag))[0]]
 
             self.log.info('%i in GAIA (%s)'%(len(ref_cat),self.gaia_catalog))
 
