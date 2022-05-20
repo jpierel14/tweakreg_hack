@@ -343,12 +343,12 @@ class TweakRegStep(Step):
                 # for the possibility that errors still exist in relative overlap.
                 if self.gaia_matching_function is None:
                     self.gaia_matching_function = TPMatch(
-                        searchrad=self.searchrad * 3.0,
-                        separation=self.separation / 10.0,
+                        searchrad=self.searchrad,
+                        separation=self.separation,
                         use2dhist=self.use2dhist,
                         tolerance=self.tolerance,
-                        xoffset=0.0,
-                        yoffset=0.0
+                        xoffset=self.xoffset,
+                        yoffset=self.yoffset
                     )
                 else:
                     self.log.info('USING PROVIDED MATCHING FUNCTION FOR GAIA')
