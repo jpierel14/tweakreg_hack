@@ -317,7 +317,7 @@ class TweakRegStep(Step):
 
 
 
-
+        self.refcat = self.refcat
         try:
             align_wcs(
                 imcats,
@@ -464,8 +464,7 @@ class TweakRegStep(Step):
                 imcat.meta['image_model'].wcs = wcs.WCS(header=gwcs_header)
                 """
             else:
-                self.log.warning('FAILED HERE SOMEHOW')
-                self.log.warning(imcat.meta.get('fit_info')['status'])
+                raise Exception('TWEAKSTEP ' + imcat.meta.get('fit_info')['status'])
 
         return images#imcats
 
