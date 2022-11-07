@@ -9,8 +9,12 @@ import numpy as np
 from astropy.table import Table
 from astropy import units as u
 from astropy.coordinates import SkyCoord
+from astropy.io import fits
+from astropy.wcs import WCS
 from tweakwcs.imalign import align_wcs
-from tweakwcs.tpwcs import JWSTgWCS
+#from tweakwcs.tpwcs import JWSTgWCS
+from tweakwcs.correctors import JWSTWCSCorrector
+from tweakwcs.correctors import FITSWCSCorrector
 from tweakwcs.matchutils import TPMatch
 
 # JWST
@@ -94,6 +98,30 @@ class TweakRegStep(Step):
 
     reference_file_types = []
 
+    def __init__(self):
+
+        dummy_step = Step()
+        
+        self.input_file = ''
+        self.name = dummy_step.name
+        self.log = dummy_step.log
+        self.output_file = ''
+        self.suffix = dummy_step.suffix
+        self._pre_hooks = dummy_step._pre_hooks
+        self._post_hooks = dummy_step._post_hooks
+        self.output_use_model = dummy_step.output_use_model
+        self.output_ext = dummy_step.output_ext
+        self.skip = dummy_step.skip
+        self.enforce_user_order = True
+        self.align_to_gaia = False
+        self.nclip = 3
+        self.sigma = 3.0
+        self.tolerance = 0.7
+        self.gaia_catalog = 'GAIADR2'
+        self.override_save = False
+
+        return
+
     def process(self, input):
 
         # TODO add these params as actual config items...wherever that happens
@@ -130,9 +158,9 @@ class TweakRegStep(Step):
         # except:
         #     self.brightest_gaia_mag = -999
         # try:
-        #     temp = self.faintest_gaia_mag 
+        #     temp = self.faintest_gaia_mag
         # except:
-        #     self.faintest_gaia_mag = 999 
+        #     self.faintest_gaia_mag = 999
 
         # try:
         #     temp = self.source_xcol
@@ -151,7 +179,7 @@ class TweakRegStep(Step):
                     e.args = ('REFCAT MUST BE ASCII OR ECSV TABLE',) + e.args[1:]
 
 
-        
+
 
         try:
             images = datamodels.ModelContainer(input)
@@ -167,6 +195,8 @@ class TweakRegStep(Step):
             # Set expand_refcat to True to eliminate possibility of duplicate
             # entries when aligning to GAIA
             self.expand_refcat = True
+        else:
+            self.expand_refcat = False
 
         if len(images) == 0:
             raise ValueError("Input must contain at least one image model.")
@@ -201,7 +231,7 @@ class TweakRegStep(Step):
 
 
             # filter out sources outside the WCS bounding box
-            bb = image_model.meta.wcs.bounding_box
+            bb = None#image_model.meta.wcs.bounding_box
             if bb is not None:
                 ((xmin, xmax), (ymin, ymax)) = bb
                 xname = 'xcentroid' if 'xcentroid' in catalog.colnames else 'x'
@@ -308,7 +338,7 @@ class TweakRegStep(Step):
             new_refcat = Table()
             if self.ref_racol is not None:
                 new_refcat['RA'] = self.refcat[self.ref_racol]
-            if self.ref_deccol is not None:    
+            if self.ref_deccol is not None:
                 new_refcat['DEC'] = self.refcat[self.ref_deccol]
             for col in self.refcat.colnames:
                 if col not in [self.ref_racol,self.ref_deccol]:
@@ -350,8 +380,14 @@ class TweakRegStep(Step):
             #     raise e
 
         for imcat in imcats:
-            wcs = imcat.meta['image_model'].meta.wcs
+
             twcs = imcat.wcs
+
+            try:
+                wcs = imcat.meta['image_model'].meta.wcs
+            except:
+                wcs = twcs
+
             if not self._is_wcs_correction_small(wcs, twcs):
                 # Large corrections are typically a result of source
                 # mis-matching or poorly-conditioned fit. Skip such models.
@@ -417,7 +453,7 @@ class TweakRegStep(Step):
                     if 'REFERENCE' in imcat.meta['fit_info']['status']:
                         del imcat.meta['fit_info']
 
-                
+
                 # Perform fit
                 align_wcs(
                     imcats,
@@ -453,27 +489,52 @@ class TweakRegStep(Step):
                 imcat.meta['image_model'].meta.wcs = imcat.wcs
                 images[n].meta.wcs = imcat.wcs
 
-                """
-                # Also update FITS representation in input exposures for
-                # subsequent reprocessing by the end-user.
-                # Not currently enabled, but may be requested later...
-                gwcs_header = imcat.wcs.to_fits_sip(max_pix_error=0.1,
-                                                max_inv_pix_error=0.1,
-                                                degree=3,
-                                                npoints=128)
-                imcat.meta['image_model'].wcs = wcs.WCS(header=gwcs_header)
-                """
+                # """
+                # # Also update FITS representation in input exposures for
+                # # subsequent reprocessing by the end-user.
+                if self.override_save == True:
+                    # gwcs_header = imcat.wcs.to_fits_sip(max_pix_error=0.1,
+                    #                                 max_inv_pix_error=0.1,
+                    #                                 degree=3,
+                    #                                 npoints=128)
+                    
+                    gwcs_header = imcat.wcs.to_header()
+                    from astropy.io import fits
+                    dm_fits = fits.open(self.input_file)
+
+                    for key,value in dict(gwcs_header).items():
+                        for k in dm_fits['SCI',1].header.keys():
+                            if k==key:
+                                dm_fits['SCI',1].header[key] = value
+                                break
+
+                    dm_fits.writeto(self.output_file,overwrite=True)
+                    
+                    #test = imcat.wcs.to_fits() 
+                    #test.writeto(self.output_file)
+                        
+                    return 
+                # """
             else:
                 raise Exception('TWEAKSTEP ' + imcat.meta.get('fit_info')['status'])
 
-        return images#imcats
+        return images #imcats
 
     def _is_wcs_correction_small(self, wcs, twcs):
         """Check that the newly tweaked wcs hasn't gone off the rails"""
         tolerance = 10.0 * self.tolerance * u.arcsec
 
-        ra, dec = wcs.footprint(axis_type="spatial").T
-        tra, tdec = twcs.footprint(axis_type="spatial").T
+        try:
+            ra, dec = wcs.footprint(axis_type="spatial").T
+            tra, tdec = twcs.footprint(axis_type="spatial").T
+        except:
+            try:
+                ra, dec = [i[0] for i in wcs.footprint],[i[1] for i in wcs.footprint]
+            except:
+                ra, dec = wcs.footprint(axis_type="spatial").T
+                
+            tra, tdec = [i[0] for i in twcs.footprint],[i[1] for i in twcs.footprint]
+
         skycoord = SkyCoord(ra=ra, dec=dec, unit="deg")
         tskycoord = SkyCoord(ra=tra, dec=tdec, unit="deg")
 
@@ -508,14 +569,25 @@ class TweakRegStep(Step):
 
         # create WCSImageCatalog object:
         refang = image_model.meta.wcsinfo.instance
-        im = JWSTgWCS(
+        try:
+            #im = JWSTgWCS(
+            im = JWSTWCSCorrector(
             wcs=image_model.meta.wcs,
             wcsinfo={'roll_ref': refang['roll_ref'],
                      'v2_ref': refang['v2_ref'],
                      'v3_ref': refang['v3_ref']},
             meta={'image_model': image_model, 'catalog': catalog,
                   'name': model_name}
-        )
+                  )
+        except:
+            head = fits.open(self.input_file)[1].header
+            wcs = WCS(head)
+            wcs.footprint = WCS.calc_footprint(wcs)
+            im = FITSWCSCorrector(
+            wcs = wcs,
+            meta = {'image_model': image_model, 'catalog': catalog,
+                  'name': model_name}
+            )
 
         return im
 
