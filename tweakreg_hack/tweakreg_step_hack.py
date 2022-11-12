@@ -492,24 +492,26 @@ class TweakRegStep(Step):
                 # """
                 # # Also update FITS representation in input exposures for
                 # # subsequent reprocessing by the end-user.
-                if self.override_save == True:
+                if True:#self.override_save == True:
                     # gwcs_header = imcat.wcs.to_fits_sip(max_pix_error=0.1,
                     #                                 max_inv_pix_error=0.1,
                     #                                 degree=3,
                     #                                 npoints=128)
                     
                     gwcs_header = imcat.wcs.to_header()
+                    #print(gwcs_header)
+                    #sys.exit()
                     from astropy.io import fits
                     dm_fits = fits.open(self.input_file)
-
-                    for key,value in dict(gwcs_header).items():
-                        for k in dm_fits['SCI',1].header.keys():
-                            if k==key:
-                                dm_fits['SCI',1].header[key] = value
-                                break
+                    dm_fits['SCI',1].header.update(gwcs_header)
+                    #for key,value in dict(gwcs_header).items():
+                    #    for k in dm_fits['SCI',1].header.keys():
+                    #        if k==key:
+                    #            print(dm_fits['SCI',1].header[key], value)
+                    #            dm_fits['SCI',1].header[key] = value
+                    #            break
 
                     dm_fits.writeto(self.output_file,overwrite=True)
-                    
                     #test = imcat.wcs.to_fits() 
                     #test.writeto(self.output_file)
                         
