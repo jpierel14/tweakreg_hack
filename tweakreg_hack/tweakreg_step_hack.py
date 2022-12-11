@@ -333,6 +333,14 @@ class TweakRegStep(Step):
         else:
             self.log.info('USING PROVIDED MATCHING FUNCTION')
 
+
+        #print(self.refcat)
+        try:
+            create_pixregionfile(self.refcat[self.ref_racol],self.refcat[self.ref_deccol],
+            self.input_file.replace('.fits','.reg'),'red',coords='icrs',radius=[.5]*len(self.refcat))
+        except:
+            pass
+        #sys.exit()
         if self.refcat is not None:
             keep = []
             new_refcat = Table()
@@ -348,6 +356,9 @@ class TweakRegStep(Step):
 
 
         self.refcat = self.refcat
+
+
+
         try:
             align_wcs(
                 imcats,
@@ -498,7 +509,10 @@ class TweakRegStep(Step):
                     #                                 degree=3,
                     #                                 npoints=128)
                     
-                    gwcs_header = imcat.wcs.to_header()
+                    try:
+                        gwcs_header = imcat.wcs.to_header()
+                    except:
+                        gwcs_header = imcat.wcs.to_fits()[0]
                     #print(gwcs_header)
                     #sys.exit()
                     from astropy.io import fits
