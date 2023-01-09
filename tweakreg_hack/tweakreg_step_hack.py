@@ -508,12 +508,10 @@ class TweakRegStep(Step):
                     #                                 max_inv_pix_error=0.1,
                     #                                 degree=3,
                     #                                 npoints=128)
-                    
                     try:
                         gwcs_header = imcat.wcs.to_header()
                     except:
                         gwcs_header = imcat.wcs.to_fits()[0]
-                    #print(gwcs_header)
                     #sys.exit()
                     from astropy.io import fits
                     dm_fits = fits.open(self.input_file)
