@@ -12,6 +12,9 @@ from astropy.coordinates import SkyCoord
 from tweakwcs.imalign import align_wcs
 from tweakwcs.tpwcs import JWSTgWCS
 from tweakwcs.matchutils import TPMatch
+from astropy.io import fits
+from astropy.wcs import WCS
+from tweakwcs.correctors import FITSWCSCorrector
 
 # JWST
 from jwst.stpipe import Step
@@ -90,6 +93,7 @@ class TweakRegStep(Step):
         min_gaia = integer(min=0, default=5) # Min number of GAIA sources needed
         save_gaia_catalog = boolean(default=False)  # Write out GAIA catalog as a separate product
         output_use_model = boolean(default=True)  # When saving use `DataModel.meta.filename`
+        telescope = string(default='jwst') # telescope used
     """
 
     reference_file_types = []
@@ -201,15 +205,16 @@ class TweakRegStep(Step):
 
 
             # filter out sources outside the WCS bounding box
-            bb = image_model.meta.wcs.bounding_box
-            if bb is not None:
-                ((xmin, xmax), (ymin, ymax)) = bb
-                xname = 'xcentroid' if 'xcentroid' in catalog.colnames else 'x'
-                yname = 'ycentroid' if 'ycentroid' in catalog.colnames else 'y'
-                x = catalog[xname]
-                y = catalog[yname]
-                mask = (x > xmin) & (x < xmax) & (y > ymin) & (y < ymax)
-                catalog = catalog[mask]
+            if self.telescope.lower()=='jwst':
+                bb = image_model.meta.wcs.bounding_box
+                if bb is not None:
+                    ((xmin, xmax), (ymin, ymax)) = bb
+                    xname = 'xcentroid' if 'xcentroid' in catalog.colnames else 'x'
+                    yname = 'ycentroid' if 'ycentroid' in catalog.colnames else 'y'
+                    x = catalog[xname]
+                    y = catalog[yname]
+                    mask = (x > xmin) & (x < xmax) & (y > ymin) & (y < ymax)
+                    catalog = catalog[mask]
 
             filename = image_model.meta.filename
             nsources = len(catalog)
@@ -350,8 +355,12 @@ class TweakRegStep(Step):
             #     raise e
 
         for imcat in imcats:
-            wcs = imcat.meta['image_model'].meta.wcs
+            
             twcs = imcat.wcs
+            if self.telescope.lower()=='jwst':
+                wcs = imcat.meta['image_model'].meta.wcs
+            else:
+                wcs = twcs
             if not self._is_wcs_correction_small(wcs, twcs):
                 # Large corrections are typically a result of source
                 # mis-matching or poorly-conditioned fit. Skip such models.
@@ -452,6 +461,17 @@ class TweakRegStep(Step):
 
                 imcat.meta['image_model'].meta.wcs = imcat.wcs
                 images[n].meta.wcs = imcat.wcs
+                if self.telescope.lower() == 'hst':
+                    try:
+                        gwcs_header = imcat.wcs.to_header()
+                    except:
+                        gwcs_header = imcat.wcs.to_fits()[0]
+                    from astropy.io import fits
+                    dm_fits = fits.open(self.input_file)
+                    dm_fits['SCI',1].header.update(gwcs_header)
+
+                    dm_fits.writeto(self.output_file,overwrite=True)
+                    return
 
                 """
                 # Also update FITS representation in input exposures for
@@ -472,9 +492,16 @@ class TweakRegStep(Step):
     def _is_wcs_correction_small(self, wcs, twcs):
         """Check that the newly tweaked wcs hasn't gone off the rails"""
         tolerance = 10.0 * self.tolerance * u.arcsec
-
-        ra, dec = wcs.footprint(axis_type="spatial").T
-        tra, tdec = twcs.footprint(axis_type="spatial").T
+        if self.telescope.lower()=='jwst':
+            ra, dec = wcs.footprint(axis_type="spatial").T
+            tra, tdec = twcs.footprint(axis_type="spatial").T
+        else:
+            try:
+                ra, dec = [i[0] for i in wcs.footprint],[i[1] for i in wcs.footprint]
+            except:
+                ra, dec = wcs.footprint(axis_type="spatial").T
+                
+            tra, tdec = [i[0] for i in twcs.footprint],[i[1] for i in twcs.footprint]
         skycoord = SkyCoord(ra=ra, dec=dec, unit="deg")
         tskycoord = SkyCoord(ra=tra, dec=tdec, unit="deg")
 
@@ -509,14 +536,24 @@ class TweakRegStep(Step):
 
         # create WCSImageCatalog object:
         refang = image_model.meta.wcsinfo.instance
-        im = JWSTgWCS(
-            wcs=image_model.meta.wcs,
-            wcsinfo={'roll_ref': refang['roll_ref'],
-                     'v2_ref': refang['v2_ref'],
-                     'v3_ref': refang['v3_ref']},
-            meta={'image_model': image_model, 'catalog': catalog,
+        if self.telescope.lower()=='jwst':
+            im = JWSTgWCS(
+                wcs=image_model.meta.wcs,
+                wcsinfo={'roll_ref': refang['roll_ref'],
+                         'v2_ref': refang['v2_ref'],
+                         'v3_ref': refang['v3_ref']},
+                meta={'image_model': image_model, 'catalog': catalog,
+                      'name': model_name}
+            )
+        else:
+            head = fits.open(self.input_file)[1].header
+            wcs = WCS(head)
+            wcs.footprint = WCS.calc_footprint(wcs)
+            im = FITSWCSCorrector(
+            wcs = wcs,
+            meta = {'image_model': image_model, 'catalog': catalog,
                   'name': model_name}
-        )
+            )
 
         return im
 
