@@ -14,13 +14,14 @@ from tweakwcs.tpwcs import JWSTgWCS
 from tweakwcs.matchutils import TPMatch
 from astropy.io import fits
 from astropy.wcs import WCS
-from tweakwcs.correctors import FITSWCSCorrector
+from tweakwcs.correctors import FITSWCSCorrector,WCSCorrector
 
 # JWST
 from jwst.stpipe import Step
 from jwst import datamodels
 
 from jwst.tweakreg import astrometric_utils as amutils
+from jwst.assign_wcs.util import update_fits_wcsinfo
 from jwst.tweakreg.tweakreg_catalog import make_tweakreg_catalog
 
 
@@ -354,23 +355,23 @@ class TweakRegStep(Step):
             # else:
             #     raise e
 
-        for imcat in imcats:
+        # for imcat in imcats:
             
-            twcs = imcat.wcs
-            if self.telescope.lower()=='jwst':
-                wcs = imcat.meta['image_model'].meta.wcs
-            else:
-                wcs = twcs
-            if not self._is_wcs_correction_small(wcs, twcs):
+        #     twcs = imcat.wcs
+        #     if self.telescope.lower()=='jwst' and True:
+        #         wcs = imcat.meta['image_model'].meta.wcs
+        #     else:
+        #         wcs = twcs
+            #if not self._is_wcs_correction_small(wcs, twcs):
                 # Large corrections are typically a result of source
                 # mis-matching or poorly-conditioned fit. Skip such models.
-                self.log.warning(f"WCS has been tweaked by more than {10 * self.tolerance} arcsec")
-                self.log.warning("Skipping 'TweakRegStep'...")
-                self.skip = True
-                for model in images:
-                    model.meta.cal_step.tweakreg = "SKIPPED"
-                return images
-
+            #    self.log.warning(f"WCS has been tweaked by more than {10 * self.tolerance} arcsec")
+            #    self.log.warning("Skipping 'TweakRegStep'...")
+            #    self.skip = True
+            #    for model in images:
+            #        model.meta.cal_step.tweakreg = "SKIPPED"
+            #    return images
+        """
         if self.align_to_gaia:
             self.log.info('PERFORMING GAIA ALIGNMENT')
             # Get catalog of GAIA sources for the field
@@ -439,7 +440,7 @@ class TweakRegStep(Step):
                     nclip=self.nclip,
                     sigma=(self.sigma, 'rmse')
                 )
-
+        """
         for n,imcat in enumerate(imcats):
             imcat.meta['image_model'].meta.cal_step.tweakreg = 'COMPLETE'
 
@@ -459,17 +460,35 @@ class TweakRegStep(Step):
                     #       for end-user searches.
                     imcat.wcs.name = "FIT-LVL3-{}".format(self.gaia_catalog)
 
-                imcat.meta['image_model'].meta.wcs = imcat.wcs
-                images[n].meta.wcs = imcat.wcs
-                if self.telescope.lower() == 'hst':
-                    try:
-                        gwcs_header = imcat.wcs.to_header()
-                    except:
-                        gwcs_header = imcat.wcs.to_fits()[0]
+                #imcat.meta['image_model'].meta.wcs = imcat.wcs
+                #images[n].meta.wcs = imcat.wcs
+                if self.telescope.lower() == 'hst' or self.pipeline_level==3:
+                    #imcat.meta['image_model'].write(self.output_file,overwrite=True)
+                    #return
+                    from astropy import wcs
+                    #try:
+                    gwcs_header = imcat.wcs.to_header()
+                    #except:
+                    #gwcs_header = wcs.WCS(imcat.wcs.to_fits())
                     from astropy.io import fits
+                    import drizzlepac 
                     dm_fits = fits.open(self.input_file)
-                    dm_fits['SCI',1].header.update(gwcs_header)
-
+                    #print(gwcs_header['CRVAL1'],gwcs_header['CRVAL2'])
+                    #print(dm_fits[1].header['CRVAL1'],dm_fits[1].header['CRVAL2'])
+                    #for i in range(len(dm_fits)):
+                    #    dm_fits[i].header.update(gwcs_header)
+                    for i in range(len(dm_fits)):
+                        for key in gwcs_header.keys():
+                            if len(key)>0 and key in dm_fits[i].header:
+                                dm_fits[i].header.set(key,value=gwcs_header[key])
+                    #print(dm_fits[1].header['CRVAL1'],dm_fits[1].header['CRVAL2'])
+                    #dm_fits[1].header['CRVAL1']+=.001
+                    #dm_fits[1].header['CRVAL2']+=.001
+                    #newwcs = drizzlepac.wcs_functions.build_hstwcs(gwcs_header['CRVAL1'],
+                    #    gwcs_header['CRVAL2'],gwcs_header['CRPIX1'],gwcs_header['CRPIX2'],
+                    #    dm_fits[0].header['NAXIS1'],dm_fits[0].header['NAXIS2'],dm_fits[0].header['PXSCALE'],
+                    #    dm_fits[0].header['ORIENTAT'])
+                    #drizzlepac.updatehdr.update_wcs(self.input_file,1,gwcs_header)
                     dm_fits.writeto(self.output_file,overwrite=True)
                     return
 
@@ -483,6 +502,19 @@ class TweakRegStep(Step):
                                                 npoints=128)
                 imcat.meta['image_model'].wcs = wcs.WCS(header=gwcs_header)
                 """
+                # Also update FITS representation in input exposures for
+                # subsequent reprocessing by the end-user.
+                try:
+                    update_fits_wcsinfo(
+                        imcat.meta['image_model'],
+                        max_pix_error=0.01,
+                        npoints=16
+                    )
+                except (ValueError, RuntimeError) as e:
+                    self.log.warning(
+                        "Failed to update 'meta.wcsinfo' with FITS SIP "
+                        f'approximation. Reported error is:\n"{e.args[0]}"'
+                    )
             else:
                 self.log.warning('FAILED HERE SOMEHOW')
                 self.log.warning(imcat.meta.get('fit_info')['status'])
@@ -535,16 +567,27 @@ class TweakRegStep(Step):
             catalog.rename_column('ycentroid', 'y')
 
         # create WCSImageCatalog object:
-        refang = image_model.meta.wcsinfo.instance
-        if self.telescope.lower()=='jwst':
+        
+
+        if self.telescope.lower()=='jwst' and self.pipeline_level==2:
+            refang = image_model.meta.wcsinfo.instance
             im = JWSTgWCS(
                 wcs=image_model.meta.wcs,
+                #wcsinfo={},
                 wcsinfo={'roll_ref': refang['roll_ref'],
-                         'v2_ref': refang['v2_ref'],
-                         'v3_ref': refang['v3_ref']},
+                        'v2_ref': refang['v2_ref'],
+                        'v3_ref': refang['v3_ref']},
                 meta={'image_model': image_model, 'catalog': catalog,
                       'name': model_name}
             )
+            # im = JWSTgWCS(
+            #     wcs=image_model.meta.wcs,
+            #     wcsinfo={'roll_ref': refang['roll_ref'],
+            #              'v2_ref': refang['v2_ref'],
+            #              'v3_ref': refang['v3_ref']},
+            #     meta={'image_model': image_model, 'catalog': catalog,
+            #           'name': model_name}
+            # )
         else:
             head = fits.open(self.input_file)[1].header
             wcs = WCS(head)
