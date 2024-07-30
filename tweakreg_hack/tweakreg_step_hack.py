@@ -14,7 +14,7 @@ from tweakwcs.tpwcs import JWSTgWCS
 from tweakwcs.matchutils import TPMatch
 from astropy.io import fits
 from astropy.wcs import WCS
-from tweakwcs.correctors import FITSWCSCorrector,WCSCorrector
+from tweakwcs.correctors import JWSTWCSCorrector,FITSWCSCorrector,WCSCorrector
 
 # JWST
 from jwst.stpipe import Step
@@ -460,8 +460,8 @@ class TweakRegStep(Step):
                     #       for end-user searches.
                     imcat.wcs.name = "FIT-LVL3-{}".format(self.gaia_catalog)
 
-                #imcat.meta['image_model'].meta.wcs = imcat.wcs
-                #images[n].meta.wcs = imcat.wcs
+                imcat.meta['image_model'].meta.wcs = imcat.wcs
+                images[n].meta.wcs = imcat.wcs
                 if self.telescope.lower() == 'hst' or self.pipeline_level==3:
                     #imcat.meta['image_model'].write(self.output_file,overwrite=True)
                     #return
@@ -472,15 +472,45 @@ class TweakRegStep(Step):
                     #gwcs_header = wcs.WCS(imcat.wcs.to_fits())
                     from astropy.io import fits
                     import drizzlepac 
+                    #if self.do_driz:
+                    #    dm_fits = fits.open(self.true_file)
+                    #else:
+                    
+                    if self.do_driz:
+                        from stwcs.updatewcs import wcsutil
+                        
+                        wcsutil.altwcs.archive_wcs(self.input_file,0,
+                                                            wcsname='ORIG',wcskey='B')
                     dm_fits = fits.open(self.input_file)
                     #print(gwcs_header['CRVAL1'],gwcs_header['CRVAL2'])
                     #print(dm_fits[1].header['CRVAL1'],dm_fits[1].header['CRVAL2'])
                     #for i in range(len(dm_fits)):
                     #    dm_fits[i].header.update(gwcs_header)
-                    for i in range(len(dm_fits)):
-                        for key in gwcs_header.keys():
-                            if len(key)>0 and key in dm_fits[i].header:
-                                dm_fits[i].header.set(key,value=gwcs_header[key])
+                    
+                    # if self.do_driz:
+                    #     gwcs_header['CRPIX1'] = dm_fits['SCI',1].header['CRPIX1']
+                    #     gwcs_header['CRPIX2'] = dm_fits['SCI',1].header['CRPIX2']
+                    #old_wcs = wcs.WCS(dm_fits['SCI',1],dm_fits)
+
+                    #for i in range(len(dm_fits)):
+                    if not self.do_driz:
+                        i=1
+                    else:
+                        i=0
+                    for key in gwcs_header.keys():
+                       if len(key)>0:
+                           #dm_fits[i].header[key+'A'] = dm_fits[i].header[key]
+                           #if not (self.do_driz or ('CRPIX' in key or 'CTYPE' in key)):
+                            if 'CTYPE' not in key:
+                                if key in dm_fits[i].header:
+                                    print(key,dm_fits[i].header[key],gwcs_header[key])
+                                if key.startswith('PC') and key not in dm_fits[i].header.keys():
+                                    dm_fits[i].header.set(key.replace('PC','CD'),value=gwcs_header[key])
+                                elif key in dm_fits[i].header:
+                                    dm_fits[i].header.set(key,value=gwcs_header[key])
+                                #else:
+                                #    dm_fits[i].header.set(key,value='TWEAK')
+                    
                     #print(dm_fits[1].header['CRVAL1'],dm_fits[1].header['CRVAL2'])
                     #dm_fits[1].header['CRVAL1']+=.001
                     #dm_fits[1].header['CRVAL2']+=.001
@@ -489,7 +519,32 @@ class TweakRegStep(Step):
                     #    dm_fits[0].header['NAXIS1'],dm_fits[0].header['NAXIS2'],dm_fits[0].header['PXSCALE'],
                     #    dm_fits[0].header['ORIENTAT'])
                     #drizzlepac.updatehdr.update_wcs(self.input_file,1,gwcs_header)
-                    dm_fits.writeto(self.output_file,overwrite=True)
+                    
+                    if self.do_driz:
+                        import stwcs
+                        dm_fits.writeto(self.input_file,overwrite=True)
+                        true = fits.open(self.true_file)
+                        true.writeto(self.output_file,overwrite=True)
+                        #wcs1 = wcs.WCS(true['SCI',1],true)
+                        #wcs2 = wcs.WCS(true['SCI',2],true)
+                        #stwcs.wcsutil.altwcs.archiveWCS(self.input_file,('sci',1),
+                        #                                    wcsname='ORIG')
+                        #drizzlepac.tweakback.update_chip_wcs(wcs1,old_wcs,wcs.WCS(gwcs_header))
+                        #drizzlepac.tweakback.update_chip_wcs(wcs2,old_wcs,wcs.WCS(gwcs_header))
+                        drizzlepac.tweakback.apply_tweak(self.input_file+'[0]','ORIG',
+                                                input_files=self.output_file)
+                        #head1 = wcs1.to_header()
+                        #head2 = wcs2.to_header()
+                        #head1['CTYPE1'] = 'RA---TAN-SIP'
+                        #head1['CTYPE2'] = 'DEC---TAN-SIP'
+                        #head2['CTYPE1'] = 'RA---TAN-SIP'
+                        #head2['CTYPE2'] = 'DEC---TAN-SIP'
+                        #true['SCI',1].header.update()
+                        
+                        #true['SCI',2].header.update(wcs2.to_header())
+                        #true.writeto(self.output_file,overwrite=True)
+                    else:
+                        dm_fits.writeto(self.output_file,overwrite=True)
                     return
 
                 """
@@ -504,17 +559,17 @@ class TweakRegStep(Step):
                 """
                 # Also update FITS representation in input exposures for
                 # subsequent reprocessing by the end-user.
-                try:
-                    update_fits_wcsinfo(
-                        imcat.meta['image_model'],
-                        max_pix_error=0.01,
-                        npoints=16
-                    )
-                except (ValueError, RuntimeError) as e:
-                    self.log.warning(
-                        "Failed to update 'meta.wcsinfo' with FITS SIP "
-                        f'approximation. Reported error is:\n"{e.args[0]}"'
-                    )
+                # try:
+                #     update_fits_wcsinfo(
+                #         imcat.meta['image_model'],
+                #         max_pix_error=0.01,
+                #         npoints=16
+                #     )
+                # except (ValueError, RuntimeError) as e:
+                #     self.log.warning(
+                #         "Failed to update 'meta.wcsinfo' with FITS SIP "
+                #         f'approximation. Reported error is:\n"{e.args[0]}"'
+                #     )
             else:
                 self.log.warning('FAILED HERE SOMEHOW')
                 self.log.warning(imcat.meta.get('fit_info')['status'])
@@ -571,7 +626,7 @@ class TweakRegStep(Step):
 
         if self.telescope.lower()=='jwst' and self.pipeline_level==2:
             refang = image_model.meta.wcsinfo.instance
-            im = JWSTgWCS(
+            im = JWSTWCSCorrector(
                 wcs=image_model.meta.wcs,
                 #wcsinfo={},
                 wcsinfo={'roll_ref': refang['roll_ref'],
@@ -589,8 +644,13 @@ class TweakRegStep(Step):
             #           'name': model_name}
             # )
         else:
-            head = fits.open(self.input_file)[1].header
-            wcs = WCS(head)
+            f = fits.open(self.input_file)
+            if not self.do_driz:
+                head = f['SCI',1].header
+            else:
+                head = f[0].header
+
+            wcs = WCS(head,f)
             wcs.footprint = WCS.calc_footprint(wcs)
             im = FITSWCSCorrector(
             wcs = wcs,
