@@ -20,7 +20,7 @@ from tweakwcs.correctors import JWSTWCSCorrector,FITSWCSCorrector,WCSCorrector
 from jwst.stpipe import Step
 from jwst import datamodels
 
-from jwst.tweakreg import astrometric_utils as amutils
+#from stcal.tweakreg import astrometric_utils as amutils
 from jwst.assign_wcs.util import update_fits_wcsinfo
 from jwst.tweakreg.tweakreg_catalog import make_tweakreg_catalog
 
